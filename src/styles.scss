@@ -1,8 +1,19 @@
 /* You can add global styles to this file, and also import other style files */
-*, body {
+* {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0b1120;
+  color: #e2e8f0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  overflow-x: hidden;
+  padding-bottom: 48px; /* keeps bottom pagination clear of the Netlify badge */
 }
 
 .heading-text {

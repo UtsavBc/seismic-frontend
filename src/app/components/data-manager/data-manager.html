@@ -1,7 +1,7 @@
-<div class="container-fluid py-3 text-light bg-dark min-vh-100">
+<div class="container-fluid py-3 px-2 px-md-3 text-light bg-dark min-vh-100">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-    <h4 class="mb-0 fw-bold">Data Management (CRUD & Import/Export)</h4>
-    <button class="btn btn-sm btn-danger" (click)="resetAllData()">
+    <h4 class="mb-0 fw-bold fs-5 fs-md-4">Data Management (CRUD &amp; Import/Export)</h4>
+    <button class="btn btn-sm btn-danger text-nowrap" (click)="resetAllData()">
       Delete All Data (Fresh Reset)
     </button>
   </div>
@@ -19,7 +19,7 @@
       <div class="card bg-secondary bg-opacity-10 border-secondary p-3 h-100">
         <h6 class="mb-3 heading-text">Insert New Reading</h6>
         <div class="row g-2 align-items-end">
-          <div class="col-md-3">
+          <div class="col-6 col-md-3">
             <label class="form-label small text-white">X-Axis</label>
             <input
               type="number"
@@ -28,7 +28,7 @@
               [(ngModel)]="newReading.x"
             />
           </div>
-          <div class="col-md-3">
+          <div class="col-6 col-md-3">
             <label class="form-label small text-white">Y-Axis</label>
             <input
               type="number"
@@ -37,7 +37,7 @@
               [(ngModel)]="newReading.y"
             />
           </div>
-          <div class="col-md-3">
+          <div class="col-6 col-md-3">
             <label class="form-label small text-white">Z-Axis</label>
             <input
               type="number"
@@ -46,7 +46,7 @@
               [(ngModel)]="newReading.z"
             />
           </div>
-          <div class="col-md-3">
+          <div class="col-6 col-md-3">
             <button
               class="btn btn-sm btn-primary w-100"
               [disabled]="isSubmitting()"
@@ -67,14 +67,14 @@
       <div class="card bg-secondary bg-opacity-10 border-secondary p-3 h-100">
         <h6 class="mb-3 heading-text">CSV / Excel (ExcelJS)</h6>
         <div class="d-flex flex-wrap gap-2">
-          <label class="btn btn-sm btn-info text-dark fw-semibold mb-0">
+          <label class="btn btn-sm btn-info text-dark fw-semibold mb-0 text-nowrap">
             {{ isImporting() ? 'Importing...' : 'Upload CSV / XLSX' }}
             <input type="file" accept=".csv,.xlsx" (change)="onFileSelected($event)" hidden />
           </label>
-          <button class="btn btn-sm btn-outline-light" (click)="exportWaveforms('csv')">
+          <button class="btn btn-sm btn-outline-light text-nowrap" (click)="exportWaveforms('csv')">
             Export CSV
           </button>
-          <button class="btn btn-sm btn-outline-light" (click)="exportWaveforms('xlsx')">
+          <button class="btn btn-sm btn-outline-light text-nowrap" (click)="exportWaveforms('xlsx')">
             Export XLSX
           </button>
         </div>
@@ -86,12 +86,12 @@
   </div>
 
   <!-- EVENTS CRUD TABLE -->
-  <div class="card bg-secondary bg-opacity-10 border-secondary p-3">
+  <div class="card bg-secondary bg-opacity-10 border-secondary p-2 p-md-3">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-      <div class="d-flex align-items-center gap-2">
+      <div class="d-flex flex-wrap align-items-center gap-2">
         <h6 class="mb-0 heading-text">Seismic Events</h6>
         @if (selectedEventIds().length > 0) {
-          <button class="btn btn-sm btn-warning" (click)="bulkDeleteSelected()">
+          <button class="btn btn-sm btn-warning text-nowrap" (click)="bulkDeleteSelected()">
             Delete Selected ({{ selectedEventIds().length }})
           </button>
         }
@@ -99,7 +99,7 @@
 
       <input
         type="text"
-        class="form-control form-control-sm"
+        class="form-control form-control-sm w-100"
         style="max-width: 300px;"
         placeholder="Search status, magnitude, or ID..."
         [ngModel]="searchQuery()"
@@ -110,7 +110,7 @@
     <div class="table-responsive">
       <table class="table table-dark table-hover table-sm align-middle mb-0">
         <thead>
-          <tr>
+          <tr class="text-nowrap">
             <th style="width: 36px;">
               <input type="checkbox" (change)="toggleSelectAll($event)" />
             </th>
@@ -131,26 +131,26 @@
                   (change)="toggleSelectEvent(ev.id)"
                 />
               </td>
-              <td>#{{ ev.id }}</td>
-              <td>{{ formatEventTime(ev.event_time) }}</td>
-              <td>
+              <td class="text-nowrap">#{{ ev.id }}</td>
+              <td class="text-nowrap">{{ formatEventTime(ev.event_time) }}</td>
+              <td class="text-nowrap">
                 @if (editingEventId() === ev.id) {
                   <input
                     type="number"
                     step="0.001"
                     class="form-control form-control-sm"
-                    style="max-width: 120px;"
+                    style="min-width: 90px; max-width: 120px;"
                     [(ngModel)]="editForm.magnitude"
                   />
                 } @else {
                   {{ ev.magnitude | number: '1.3-3' }}
                 }
               </td>
-              <td>
+              <td class="text-nowrap">
                 @if (editingEventId() === ev.id) {
                   <select
                     class="form-select form-select-sm"
-                    style="max-width: 130px;"
+                    style="min-width: 110px; max-width: 130px;"
                     [(ngModel)]="editForm.status"
                   >
                     <option value="Moderate">Moderate</option>
@@ -169,22 +169,28 @@
                   </span>
                 }
               </td>
-              <td class="text-end">
+              <td class="text-end text-nowrap">
                 @if (editingEventId() === ev.id) {
-                  <button class="btn btn-sm btn-success me-1" (click)="saveEdit(ev.id)">
-                    Save
-                  </button>
-                  <button class="btn btn-sm btn-secondary" (click)="cancelEdit()">Cancel</button>
+                  <div class="d-flex justify-content-end gap-1 flex-nowrap">
+                    <button class="btn btn-sm btn-success py-0 px-2" (click)="saveEdit(ev.id)">
+                      Save
+                    </button>
+                    <button class="btn btn-sm btn-secondary py-0 px-2" (click)="cancelEdit()">
+                      Cancel
+                    </button>
+                  </div>
                 } @else {
-                  <button class="btn btn-sm btn-outline-info me-1" (click)="startEdit(ev)">
-                    Edit
-                  </button>
-                  <button
-                    class="btn btn-sm btn-outline-danger"
-                    (click)="deleteSingleEvent(ev.id)"
-                  >
-                    Delete
-                  </button>
+                  <div class="d-flex justify-content-end gap-1 flex-nowrap">
+                    <button class="btn btn-sm btn-outline-info py-0 px-2" (click)="startEdit(ev)">
+                      Edit
+                    </button>
+                    <button
+                      class="btn btn-sm btn-outline-danger py-0 px-2"
+                      (click)="deleteSingleEvent(ev.id)"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 }
               </td>
             </tr>
@@ -200,7 +206,7 @@
     </div>
 
     <!-- PAGINATION -->
-    <div class="d-flex justify-content-between align-items-center mt-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
       <small class="text-secondary">
         Page {{ pagination().page }} of {{ pagination().totalPages }} ({{ pagination().total }}
         total)

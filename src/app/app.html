@@ -1,13 +1,22 @@
-<nav class="navbar navbar-expand navbar-dark px-4 py-2 sticky-top" style="background: #0b1120; border-bottom: 1px solid rgba(148, 163, 184, 0.15);">
-  <div class="container-fluid px-0 d-flex align-items-center justify-content-between">
-    <a class="navbar-brand fw-bold d-flex align-items-center gap-2 me-4" routerLink="/dashboard" style="letter-spacing: 0.3px;">
-      <span class="d-inline-block rounded-circle bg-info" style="width: 10px; height: 10px; box-shadow: 0 0 10px #38bdf8;"></span>
+<nav
+  class="navbar navbar-dark px-2 px-md-4 py-2 sticky-top"
+  style="background: #0b1120; border-bottom: 1px solid rgba(148, 163, 184, 0.15);"
+>
+  <div class="container-fluid px-0 d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <a
+      class="navbar-brand fw-bold d-flex align-items-center gap-2 m-0 fs-6 fs-md-5"
+      routerLink="/dashboard"
+    >
+      <span
+        class="d-inline-block rounded-circle bg-info flex-shrink-0"
+        style="width: 10px; height: 10px; box-shadow: 0 0 10px #38bdf8;"
+      ></span>
       <span>Seismic Monitor</span>
     </a>
 
     <div class="d-flex align-items-center gap-2">
       <a
-        class="btn btn-sm px-3 fw-medium"
+        class="btn btn-sm px-2 px-md-3 fw-medium text-nowrap"
         routerLink="/dashboard"
         routerLinkActive="btn-info text-dark"
         [routerLinkActiveOptions]="{ exact: true }"
@@ -15,10 +24,10 @@
         [class.btn-outline-secondary]="!rlaDash.isActive"
         [class.text-light]="!rlaDash.isActive"
       >
-        Live Dashboard
+        Dashboard
       </a>
       <a
-        class="btn btn-sm px-3 fw-medium"
+        class="btn btn-sm px-2 px-md-3 fw-medium text-nowrap"
         routerLink="/manage"
         routerLinkActive="btn-info text-dark"
         #rlaManage="routerLinkActive"
