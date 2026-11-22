@@ -1,48 +1,33 @@
- <!-- <main style="padding: 20px;">
-    <h1>Seismic Dashboard</h1>
-    <app-waveform></app-waveform>
-  </main> -->
-  <!-- <div class="app-container">
-      <nav class="top-nav">
-        <div class="brand">🌍 Seismic Monitoring System</div>
-        <div class="nav-links">
-          <button 
-            [class.active]="currentView === 'realtime'" 
-            (click)="currentView = 'realtime'">
-            Real-Time Monitor
-          </button>
-          <button 
-            [class.active]="currentView === 'analytics'" 
-            (click)="currentView = 'analytics'">
-            Data Analytics
-          </button>
-        </div>
-      </nav>
-
-      <main class="content-area">
-        <app-waveform *ngIf="currentView === 'realtime'"></app-waveform>
-        <app-analytical-dashboard *ngIf="currentView === 'analytics'"></app-analytical-dashboard>
-      </main>
-    </div> -->
-
-    <!-- <app-dashboard /> -->
-     <nav class="navbar navbar-expand navbar-dark bg-black border-bottom border-secondary px-3">
-  <span class="navbar-brand fw-bold">Seismic Monitor</span>
-  <div class="navbar-nav gap-2">
-    <a
-      class="nav-link px-3 rounded"
-      routerLink="/dashboard"
-      routerLinkActive="active bg-primary text-white"
-    >
-      Live Dashboard
+<nav class="navbar navbar-expand navbar-dark px-4 py-2 sticky-top" style="background: #0b1120; border-bottom: 1px solid rgba(148, 163, 184, 0.15);">
+  <div class="container-fluid px-0 d-flex align-items-center justify-content-between">
+    <a class="navbar-brand fw-bold d-flex align-items-center gap-2 me-4" routerLink="/dashboard" style="letter-spacing: 0.3px;">
+      <span class="d-inline-block rounded-circle bg-info" style="width: 10px; height: 10px; box-shadow: 0 0 10px #38bdf8;"></span>
+      <span>Seismic Monitor</span>
     </a>
-    <a
-      class="nav-link px-3 rounded"
-      routerLink="/manage"
-      routerLinkActive="active bg-primary text-white"
-    >
-      Manage Data (CRUD)
-    </a>
+
+    <div class="d-flex align-items-center gap-2">
+      <a
+        class="btn btn-sm px-3 fw-medium"
+        routerLink="/dashboard"
+        routerLinkActive="btn-info text-dark"
+        [routerLinkActiveOptions]="{ exact: true }"
+        #rlaDash="routerLinkActive"
+        [class.btn-outline-secondary]="!rlaDash.isActive"
+        [class.text-light]="!rlaDash.isActive"
+      >
+        Live Dashboard
+      </a>
+      <a
+        class="btn btn-sm px-3 fw-medium"
+        routerLink="/manage"
+        routerLinkActive="btn-info text-dark"
+        #rlaManage="routerLinkActive"
+        [class.btn-outline-secondary]="!rlaManage.isActive"
+        [class.text-light]="!rlaManage.isActive"
+      >
+        Manage Data
+      </a>
+    </div>
   </div>
 </nav>
 

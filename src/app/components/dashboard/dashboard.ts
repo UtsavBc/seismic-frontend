@@ -2,6 +2,7 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  OnDestroy,
   OnInit,
   ViewChild,
   inject,
@@ -28,7 +29,7 @@ import {
   templateUrl: './dashboard.html',
   styleUrl: './dashboard.scss',
 })
-export class DashboardComponent implements OnInit {
+export class DashboardComponent implements OnInit, OnDestroy {
   private seismicService = inject(SeismicService);
   private destroyRef = inject(DestroyRef);
 
@@ -57,7 +58,7 @@ export class DashboardComponent implements OnInit {
 
   // Controls & Status
   ingestionEnabled = signal<boolean>(true);
-  livePolling = signal<boolean>(false);
+  livePolling = signal<boolean>(true);
   isViewingHistory = signal<boolean>(false);
   hasMoreHistory = signal<boolean>(false);
   loadingWaveforms = signal<boolean>(false);
@@ -129,6 +130,7 @@ export class DashboardComponent implements OnInit {
     };
 
     this.chartInstance.setOption(option, !preserveZoom);
+    this.chartInstance.resize();
   }
 
   // =========================================================================
@@ -503,4 +505,9 @@ export class DashboardComponent implements OnInit {
     const d = new Date(Number(ts));
     return isNaN(d.getTime()) ? String(ts) : d.toLocaleTimeString();
   }
+
+  ngOnDestroy(): void {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+  
 }

@@ -1,4 +1,4 @@
-import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -17,7 +17,7 @@ import {
   templateUrl: './data-manager.html',
   styleUrl: './data-manager.scss',
 })
-export class DataManagerComponent implements OnInit {
+export class DataManagerComponent implements OnInit, OnDestroy {
   private seismicService = inject(SeismicService);
   private destroyRef = inject(DestroyRef);
 
@@ -326,4 +326,9 @@ export class DataManagerComponent implements OnInit {
     const d = new Date(raw);
     return isNaN(d.getTime()) ? raw : d.toLocaleString();
   }
+
+  ngOnDestroy(): void {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+  
 }

@@ -17,10 +17,10 @@
     <!-- Manual Insert Card -->
     <div class="col-lg-7">
       <div class="card bg-secondary bg-opacity-10 border-secondary p-3 h-100">
-        <h6 class="mb-3">Insert New Reading</h6>
+        <h6 class="mb-3 heading-text">Insert New Reading</h6>
         <div class="row g-2 align-items-end">
           <div class="col-md-3">
-            <label class="form-label small text-secondary">X-Axis</label>
+            <label class="form-label small text-white">X-Axis</label>
             <input
               type="number"
               step="0.01"
@@ -29,7 +29,7 @@
             />
           </div>
           <div class="col-md-3">
-            <label class="form-label small text-secondary">Y-Axis</label>
+            <label class="form-label small text-white">Y-Axis</label>
             <input
               type="number"
               step="0.01"
@@ -38,7 +38,7 @@
             />
           </div>
           <div class="col-md-3">
-            <label class="form-label small text-secondary">Z-Axis</label>
+            <label class="form-label small text-white">Z-Axis</label>
             <input
               type="number"
               step="0.01"
@@ -65,7 +65,7 @@
     <!-- Import / Export Card -->
     <div class="col-lg-5">
       <div class="card bg-secondary bg-opacity-10 border-secondary p-3 h-100">
-        <h6 class="mb-3">CSV / Excel (ExcelJS)</h6>
+        <h6 class="mb-3 heading-text">CSV / Excel (ExcelJS)</h6>
         <div class="d-flex flex-wrap gap-2">
           <label class="btn btn-sm btn-info text-dark fw-semibold mb-0">
             {{ isImporting() ? 'Importing...' : 'Upload CSV / XLSX' }}
@@ -89,7 +89,7 @@
   <div class="card bg-secondary bg-opacity-10 border-secondary p-3">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
       <div class="d-flex align-items-center gap-2">
-        <h6 class="mb-0">Seismic Events</h6>
+        <h6 class="mb-0 heading-text">Seismic Events</h6>
         @if (selectedEventIds().length > 0) {
           <button class="btn btn-sm btn-warning" (click)="bulkDeleteSelected()">
             Delete Selected ({{ selectedEventIds().length }})
@@ -116,7 +116,7 @@
             </th>
             <th>ID</th>
             <th>Event Time</th>
-            <th>Magnitude</th>
+            <th>Magnitude (m/s²)</th>
             <th>Status</th>
             <th class="text-end">Actions</th>
           </tr>
@@ -143,7 +143,7 @@
                     [(ngModel)]="editForm.magnitude"
                   />
                 } @else {
-                  {{ ev.magnitude | number: '1.3-3' }} m/s²
+                  {{ ev.magnitude | number: '1.3-3' }}
                 }
               </td>
               <td>

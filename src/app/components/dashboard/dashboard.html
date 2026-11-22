@@ -29,32 +29,32 @@
   <div class="row g-3 mb-3">
     <div class="col-6 col-md-3">
       <div class="card bg-secondary bg-opacity-25 border-secondary p-3">
-        <small class="text-secondary">TOTAL READINGS</small>
+        <small class="heading-text">TOTAL READINGS</small>
         <h4 class="mb-0 text-light">{{ stats().total_readings | number }}</h4>
       </div>
     </div>
     <div class="col-6 col-md-3">
       <div class="card bg-secondary bg-opacity-25 border-secondary p-3">
-        <small class="text-secondary">DETECTED EVENTS</small>
+        <small class="heading-text">DETECTED EVENTS</small>
         <h4 class="mb-0 text-info">{{ stats().total_events | number }}</h4>
       </div>
     </div>
     <div class="col-6 col-md-3">
       <div class="card bg-secondary bg-opacity-25 border-secondary p-3">
-        <small class="text-secondary">MAX MAGNITUDE</small>
+        <small class="heading-text">MAX MAGNITUDE</small>
         <h4 class="mb-0 text-warning">{{ stats().max_magnitude | number: '1.3-3' }} m/s²</h4>
       </div>
     </div>
     <div class="col-6 col-md-3">
       <div class="card bg-secondary bg-opacity-25 border-secondary p-3">
-        <small class="text-secondary">CRITICAL ALERTS</small>
+        <small class="heading-text">CRITICAL ALERTS</small>
         <h4 class="mb-0 text-danger">{{ stats().critical_alerts | number }}</h4>
       </div>
     </div>
   </div>
 
   <!-- DATA MANAGEMENT TOOLBAR -->
-  <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+  <!-- <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
     <label class="btn btn-sm btn-outline-info mb-0">
       {{ isImporting() ? 'Importing...' : 'Upload CSV / XLSX' }}
       <input type="file" accept=".csv,.xlsx" (change)="onFileSelected($event)" hidden />
@@ -76,7 +76,7 @@
     <button class="btn btn-sm btn-danger ms-auto" (click)="resetAllData()">
       Delete All Data
     </button>
-  </div>
+  </div> -->
 
   @if (importMessage()) {
     <div class="alert alert-info py-1 px-3 small">{{ importMessage() }}</div>
@@ -124,7 +124,7 @@
   <!-- 3-AXIS WAVEFORM CHART -->
   <div class="card bg-secondary bg-opacity-10 border-secondary p-3 mb-4">
     <div class="d-flex justify-content-between align-items-center mb-2">
-      <h6 class="mb-0">3-Axis Seismic Waveform</h6>
+      <h6 class="mb-0 heading-text">3-Axis Seismic Waveform</h6>
       <div class="d-flex gap-2">
         @if (hasMoreHistory()) {
           <button class="btn btn-sm btn-outline-secondary" (click)="loadOlderHistory()">
@@ -136,13 +136,13 @@
         }
       </div>
     </div>
-    <div #waveformChart style="width: 100%; height: 340px;"></div>
+    <div #waveformChart class="chart-box" style="width: 100%; height: 360px;"></div>
   </div>
 
   <!-- RECENT SEISMIC EVENTS TABLE -->
   <div class="card bg-secondary bg-opacity-10 border-secondary p-3">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-      <h6 class="mb-0">Recent Seismic Events</h6>
+      <h6 class="mb-0 heading-text">Recent Seismic Events</h6>
       <input
         type="text"
         class="form-control form-control-sm"
@@ -157,26 +157,26 @@
       <table class="table table-dark table-hover table-sm align-middle mb-0">
         <thead>
           <tr>
-            <th style="width: 36px;">
+            <!-- <th style="width: 36px;">
               <input type="checkbox" (change)="toggleSelectAll($event)" />
-            </th>
+            </th> -->
             <th>ID</th>
             <th>Event Time</th>
-            <th>Magnitude</th>
+            <th>Magnitude (m/s²)</th>
             <th>Status</th>
-            <th class="text-end">Actions</th>
+            <!-- <th class="text-end">Actions</th> -->
           </tr>
         </thead>
         <tbody>
           @for (ev of events(); track ev.id) {
             <tr>
-              <td>
+              <!-- <td>
                 <input
                   type="checkbox"
                   [checked]="selectedEventIds().includes(ev.id)"
                   (change)="toggleSelectEvent(ev.id)"
                 />
-              </td>
+              </td> -->
               <td>#{{ ev.id }}</td>
               <td>{{ formatEventTime(ev.event_time) }}</td>
               <td>
@@ -189,7 +189,7 @@
                     [(ngModel)]="editForm.magnitude"
                   />
                 } @else {
-                  {{ ev.magnitude | number: '1.3-3' }} m/s²
+                  {{ ev.magnitude | number: '1.3-3' }}
                 }
               </td>
               <td>
@@ -215,7 +215,7 @@
                   </span>
                 }
               </td>
-              <td class="text-end">
+              <!-- <td class="text-end">
                 @if (editingEventId() === ev.id) {
                   <button class="btn btn-sm btn-success me-1" (click)="saveEdit(ev.id)">
                     Save
@@ -232,7 +232,7 @@
                     Delete
                   </button>
                 }
-              </td>
+              </td> -->
             </tr>
           } @empty {
             <tr>
