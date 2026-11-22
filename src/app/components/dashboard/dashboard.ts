@@ -78,6 +78,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.chart?.dispose();
   }
 
+
   // =========================================================================
   // MANUAL REFRESH & LIVE POLLING TOGGLE
   // =========================================================================
