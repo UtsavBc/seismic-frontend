@@ -1,12 +1,22 @@
-<div class="dashboard">
-  <!-- Header + Ingestion ON/OFF Switch -->
-  <header class="top-bar">
-    <div>
-      <h1>Seismic Monitoring System</h1>
-      <p class="subtitle">Real-time ADXL355 3-Axis Telemetry</p>
-    </div>
+<div class="controls">
+      <button
+        class="action-btn"
+        [disabled]="isRefreshing()"
+        (click)="refreshAll()"
+      >
+        {{ isRefreshing() ? 'Refreshing...' : '↻ Refresh' }}
+      </button>
 
-    <div class="controls">
+      <button
+        class="toggle-btn"
+        [class.live]="livePolling()"
+        [class.idle]="!livePolling()"
+        (click)="toggleLivePolling()"
+      >
+        <span class="dot"></span>
+        {{ livePolling() ? 'Live Poll: ON' : 'Live Poll: OFF' }}
+      </button>
+
       <button
         class="toggle-btn"
         [class.on]="ingestionEnabled()"
@@ -18,111 +28,3 @@
         {{ ingestionEnabled() ? 'DB Ingestion: ON' : 'DB Ingestion: OFF (Paused)' }}
       </button>
     </div>
-  </header>
-
-  <!-- KPI Cards -->
-  <section class="kpi-grid">
-    <div class="kpi-card">
-      <span class="kpi-label">TOTAL READINGS</span>
-      <strong class="kpi-value">{{ stats().total_readings | number }}</strong>
-    </div>
-    <div class="kpi-card">
-      <span class="kpi-label">DETECTED EVENTS</span>
-      <strong class="kpi-value">{{ stats().total_events | number }}</strong>
-    </div>
-    <div class="kpi-card">
-      <span class="kpi-label">PEAK MAGNITUDE</span>
-      <strong class="kpi-value">{{ stats().max_magnitude | number:'1.2-2' }}</strong>
-    </div>
-    <div class="kpi-card critical">
-      <span class="kpi-label">CRITICAL ALERTS</span>
-      <strong class="kpi-value">{{ stats().critical_alerts | number }}</strong>
-    </div>
-  </section>
-
-  <!-- Waveform Chart with Scrollbar & History Loader -->
-  <section class="panel">
-    <div class="panel-header">
-      <h2>Live 3-Axis Waveform (X / Y / Z)</h2>
-      <div class="chart-meta">
-        <span>Loaded {{ samples().length }} samples</span>
-        @if (isLoadingHistory()) {
-          <span class="badge info">Loading older data...</span>
-        }
-        @if (isViewingHistory()) {
-          <button class="live-btn" (click)="jumpToLive()">Jump to Live</button>
-        }
-      </div>
-    </div>
-
-    <div #waveformChart class="chart-box"></div>
-  </section>
-
-  <!-- Server-Side Paginated Events Table -->
-  <section class="panel">
-    <div class="panel-header">
-      <h2>Recent Seismic Events</h2>
-      <div class="page-size">
-        <label for="limitSelect">Rows:</label>
-        <select id="limitSelect" [value]="pagination().limit" (change)="onPageSizeChange($event)">
-          <option value="10">10</option>
-          <option value="25">25</option>
-          <option value="50">50</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Timestamp</th>
-            <th>Peak Amplitude</th>
-            <th>Severity</th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (ev of events(); track ev.id) {
-            <tr>
-              <td>#{{ ev.id }}</td>
-              <td>{{ ev.event_time | date:'medium' }}</td>
-              <td>{{ ev.magnitude | number:'1.3-3' }} m/s²</td>
-              <td>
-                <span class="severity" [class]="ev.status.toLowerCase()">
-                  {{ ev.status }}
-                </span>
-              </td>
-            </tr>
-          } @empty {
-            <tr>
-              <td colspan="4" class="empty">No seismic events recorded yet.</td>
-            </tr>
-          }
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Pagination Controls -->
-    <div class="pagination-bar">
-      <span>
-        Page {{ pagination().page }} of {{ pagination().totalPages }}
-        ({{ pagination().total | number }} total events)
-      </span>
-      <div class="pager-btns">
-        <button
-          [disabled]="pagination().page <= 1 || loadingEvents()"
-          (click)="goToPage(pagination().page - 1)"
-        >
-          Previous
-        </button>
-        <button
-          [disabled]="pagination().page >= pagination().totalPages || loadingEvents()"
-          (click)="goToPage(pagination().page + 1)"
-        >
-          Next
-        </button>
-      </div>
-    </div>
-  </section>
-</div>

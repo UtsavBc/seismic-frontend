@@ -1,5 +1,8 @@
 :host { display: block; background: #121212; min-height: 100vh; font-family: 'Segoe UI', Tahoma, sans-serif; }
-    .top-nav { 
+* {
+  box-sizing: border-box; margin: 0; padding: 0;
+}   
+.top-nav { 
       display: flex; justify-content: space-between; align-items: center; 
       padding: 15px 30px; background: #1e1e1e; border-bottom: 1px solid #333;
     }

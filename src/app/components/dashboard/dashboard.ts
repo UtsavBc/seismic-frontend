@@ -1,5 +1,6 @@
 import {
   Component,
+  DestroyRef,
   ElementRef,
   OnDestroy,
   OnInit,
@@ -7,7 +8,9 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { CommonModule, DatePipe, DecimalPipe } from '@angular/common';
+import { DatePipe, DecimalPipe } from '@angular/common';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { EMPTY, catchError, exhaustMap, filter, timer } from 'rxjs';
 import * as echarts from 'echarts';
 import {
   DashboardStats,
@@ -20,16 +23,18 @@ import {
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, DatePipe, DecimalPipe],
+  imports: [DatePipe, DecimalPipe],
   templateUrl: './dashboard.html',
   styleUrls: ['./dashboard.scss'],
 })
 export class DashboardComponent implements OnInit, OnDestroy {
   private seismicService = inject(SeismicService);
+  private destroyRef = inject(DestroyRef);
 
   @ViewChild('waveformChart', { static: true }) chartContainer!: ElementRef<HTMLDivElement>;
   private chart?: echarts.ECharts;
-  private pollTimer?: ReturnType<typeof setInterval>;
+  private lastSeenTimestamp = 0;
+  private readonly MAX_SAMPLES_IN_MEMORY = 1500;
 
   // KPI Stats
   stats = signal<DashboardStats>({
@@ -39,9 +44,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
     critical_alerts: 0,
   });
 
-  // Ingestion ON/OFF switch
+  // Controls
   ingestionEnabled = signal<boolean>(true);
   togglingIngestion = signal<boolean>(false);
+  livePolling = signal<boolean>(false); // OFF by default to save Vercel/Neon calls
+  isRefreshing = signal<boolean>(false);
 
   // Waveform & History Scroll state
   samples = signal<WaveformPoint[]>([]);
@@ -62,35 +69,100 @@ export class DashboardComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.initChart();
     this.loadIngestionStatus();
-    this.loadStats();
-    this.loadLatestWaveforms();
-    this.loadEvents(1, 10);
-
-    // Poll every 2 seconds while in Live mode
-    this.pollTimer = setInterval(() => {
-      this.loadStats();
-      if (!this.isViewingHistory()) {
-        this.loadLatestWaveforms();
-      }
-      if (this.pagination().page === 1) {
-        this.loadEvents(1, this.pagination().limit);
-      }
-    }, 2000);
+    this.refreshAll(); // Single initial fetch on load
+    this.startLivePollingLoop();
   }
 
   ngOnDestroy(): void {
-    if (this.pollTimer) clearInterval(this.pollTimer);
     window.removeEventListener('resize', this.handleResize);
     this.chart?.dispose();
+  }
+
+  // =========================================================================
+  // MANUAL REFRESH & LIVE POLLING TOGGLE
+  // =========================================================================
+  toggleLivePolling(): void {
+    const next = !this.livePolling();
+    this.livePolling.set(next);
+    if (next) {
+      this.isViewingHistory.set(false);
+      this.refreshAll();
+    }
+  }
+
+  refreshAll(): void {
+    if (this.isRefreshing()) return;
+    this.isRefreshing.set(true);
+    this.isViewingHistory.set(false);
+
+    this.loadStats();
+    this.loadEvents(this.pagination().page, this.pagination().limit);
+
+    this.seismicService
+      .getWaveforms(150)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (res) => {
+          this.hasMoreHistory.set(res.hasMore);
+          this.samples.set(res.data);
+          this.lastSeenTimestamp = res.data.length > 0
+            ? Number(res.data[res.data.length - 1].timestamp)
+            : 0;
+          this.renderChart(res.data);
+          this.chart?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
+          this.isRefreshing.set(false);
+        },
+        error: () => this.isRefreshing.set(false),
+      });
+  }
+
+  private startLivePollingLoop(): void {
+    // Only fires when Live Polling is ON, tab is visible, DB ingestion is ON, and not viewing history
+    timer(3000, 3000)
+      .pipe(
+        filter(() =>
+          this.livePolling() &&
+          !document.hidden &&
+          this.ingestionEnabled() &&
+          !this.isViewingHistory()
+        ),
+        exhaustMap(() =>
+          this.seismicService.getWaveforms(150).pipe(
+            catchError(() => EMPTY)
+          )
+        ),
+        takeUntilDestroyed(this.destroyRef)
+      )
+      .subscribe((res) => {
+        this.hasMoreHistory.set(res.hasMore);
+
+        const latestTs = res.data.length > 0
+          ? Number(res.data[res.data.length - 1].timestamp)
+          : 0;
+
+        if (latestTs !== this.lastSeenTimestamp) {
+          this.lastSeenTimestamp = latestTs;
+          this.samples.set(res.data);
+          this.renderChart(res.data);
+
+          this.loadStats();
+          if (this.pagination().page === 1) {
+            this.loadEvents(1, this.pagination().limit);
+          }
+        }
+      });
   }
 
   // =========================================================================
   // 1. INGESTION ON/OFF SWITCH
   // =========================================================================
   loadIngestionStatus(): void {
-    this.seismicService.getIngestionSetting().subscribe({
-      next: (res) => this.ingestionEnabled.set(res.ingestion_enabled),
-    });
+    this.seismicService
+      .getIngestionSetting()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (res) => this.ingestionEnabled.set(res.ingestion_enabled),
+      });
   }
 
   toggleIngestion(): void {
@@ -98,22 +170,28 @@ export class DashboardComponent implements OnInit, OnDestroy {
     const nextState = !this.ingestionEnabled();
     this.togglingIngestion.set(true);
 
-    this.seismicService.setIngestionSetting(nextState).subscribe({
-      next: (res) => {
-        this.ingestionEnabled.set(res.ingestion_enabled);
-        this.togglingIngestion.set(false);
-      },
-      error: () => this.togglingIngestion.set(false),
-    });
+    this.seismicService
+      .setIngestionSetting(nextState)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (res) => {
+          this.ingestionEnabled.set(res.ingestion_enabled);
+          this.togglingIngestion.set(false);
+        },
+        error: () => this.togglingIngestion.set(false),
+      });
   }
 
   // =========================================================================
   // 2. STATS
   // =========================================================================
   loadStats(): void {
-    this.seismicService.getStats().subscribe({
-      next: (res) => this.stats.set(res),
-    });
+    this.seismicService
+      .getStats()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (res) => this.stats.set(res),
+      });
   }
 
   // =========================================================================
@@ -133,7 +211,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
         top: 42,
         left: 48,
         right: 24,
-        bottom: 78, // Leaves clean space for X-axis labels + slider
+        bottom: 78,
       },
       xAxis: {
         type: 'category',
@@ -166,7 +244,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
       ],
     });
 
-    // Trigger history fetch when user scrolls/drags to the left edge
     this.chart.on('datazoom', (params: any) => {
       const start = params.batch ? params.batch[0]?.start : params.start;
       const end = params.batch ? params.batch[0]?.end : params.end;
@@ -185,19 +262,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   private handleResize = () => this.chart?.resize();
 
-  loadLatestWaveforms(): void {
-    this.seismicService.getWaveforms(150).subscribe({
-      next: (res) => {
-        this.samples.set(res.data);
-        this.hasMoreHistory.set(res.hasMore);
-        this.renderChart(res.data);
-      },
-    });
-  }
-
   loadOlderWaveforms(): void {
     const current = this.samples();
-    if (this.isLoadingHistory() || !this.hasMoreHistory() || current.length === 0) {
+    if (
+      this.isLoadingHistory() ||
+      !this.hasMoreHistory() ||
+      current.length === 0 ||
+      current.length >= this.MAX_SAMPLES_IN_MEMORY
+    ) {
       return;
     }
 
@@ -205,24 +277,25 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.isLoadingHistory.set(true);
 
     const oldestTs = current[0].timestamp;
-    this.seismicService.getWaveforms(150, oldestTs).subscribe({
-      next: (res) => {
-        this.hasMoreHistory.set(res.hasMore);
-        if (res.data.length > 0) {
-          const merged = [...res.data, ...current];
-          this.samples.set(merged);
-          this.renderChart(merged);
-        }
-        this.isLoadingHistory.set(false);
-      },
-      error: () => this.isLoadingHistory.set(false),
-    });
+    this.seismicService
+      .getWaveforms(150, oldestTs)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (res) => {
+          this.hasMoreHistory.set(res.hasMore);
+          if (res.data.length > 0) {
+            const merged = [...res.data, ...current].slice(-this.MAX_SAMPLES_IN_MEMORY);
+            this.samples.set(merged);
+            this.renderChart(merged);
+          }
+          this.isLoadingHistory.set(false);
+        },
+        error: () => this.isLoadingHistory.set(false),
+      });
   }
 
   jumpToLive(): void {
-    this.isViewingHistory.set(false);
-    this.loadLatestWaveforms();
-    this.chart?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
+    this.refreshAll();
   }
 
   private renderChart(points: WaveformPoint[]): void {
@@ -244,14 +317,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
   // =========================================================================
   loadEvents(page: number, limit: number): void {
     this.loadingEvents.set(true);
-    this.seismicService.getEvents(page, limit).subscribe({
-      next: (res) => {
-        this.events.set(res.data);
-        this.pagination.set(res.pagination);
-        this.loadingEvents.set(false);
-      },
-      error: () => this.loadingEvents.set(false),
-    });
+    this.seismicService
+      .getEvents(page, limit)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (res) => {
+          this.events.set(res.data);
+          this.pagination.set(res.pagination);
+          this.loadingEvents.set(false);
+        },
+        error: () => this.loadingEvents.set(false),
+      });
   }
 
   goToPage(page: number): void {
