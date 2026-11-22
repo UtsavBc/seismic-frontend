@@ -77,21 +77,25 @@ export class DataManagerComponent implements OnInit {
     }
   }
 
-  private parseTimestamp(raw: unknown, fallbackOffsetMs: number): number {
+  private parseTimestamp(raw: unknown, fallbackOffsetMs: number, baseNow: number): number {
     if (raw instanceof Date && !isNaN(raw.getTime())) {
       return raw.getTime();
     }
     const str = String(raw ?? '').trim().replace(/^"|"$/g, '');
     const num = Number(str);
     if (Number.isFinite(num) && str !== '') {
-      // 10-digit Unix seconds -> convert to ms; 13-digit ms -> keep as-is
+      if (num < 1e9) {
+        // Relative seconds (e.g., chili.csv: 15, 15.01, ...) -> anchor to current time
+        return baseNow + Math.round(num * 1000);
+      }
+      // 10-digit Unix seconds -> ms; 13-digit ms -> keep as-is
       return num < 1e12 ? Math.trunc(num * 1000) : Math.trunc(num);
     }
     const parsedDate = Date.parse(str);
     if (!isNaN(parsedDate)) {
       return parsedDate;
     }
-    return Date.now() + fallbackOffsetMs;
+    return baseNow + fallbackOffsetMs;
   }
 
   // =========================================================================
@@ -161,7 +165,7 @@ export class DataManagerComponent implements OnInit {
   }
 
   // =========================================================================
-  // CREATE: CSV / XLSX IMPORT (SUPPORTS BOTH STANDARD & HARDWARE FORMATS)
+  // CREATE: CSV / XLSX IMPORT (STANDARD 4-COL, HARDWARE G-UNITS, & 2-COL t,d)
   // =========================================================================
   async onFileSelected(event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
@@ -175,6 +179,7 @@ export class DataManagerComponent implements OnInit {
       const rows: { timestamp: number; x: number; y: number; z: number }[] = [];
       const ext = file.name.split('.').pop()?.toLowerCase();
       const G_TO_MS2 = 9.80665;
+      const baseNow = Date.now();
 
       if (ext === 'xlsx') {
         const workbook = new ExcelJS.Workbook();
@@ -189,16 +194,31 @@ export class DataManagerComponent implements OnInit {
           if (!c1 || c1.startsWith('#')) return;
 
           const lowerC1 = c1.toLowerCase();
-          if (lowerC1.includes('timestamp') || lowerC1.includes('t_utc') || lowerC1 === 'time') {
+          if (
+            lowerC1 === 't' ||
+            lowerC1 === 'time' ||
+            lowerC1.includes('timestamp') ||
+            lowerC1.includes('t_utc')
+          ) {
             const c2 = String(row.getCell(2).value ?? '').toLowerCase();
             isGUnits = c2.includes('_g');
             return;
           }
 
-          const ts = this.parseTimestamp(rawC1, rowNumber * 8);
-          let x = Number(row.getCell(2).value);
-          let y = Number(row.getCell(3).value);
-          let z = Number(row.getCell(4).value);
+          const ts = this.parseTimestamp(rawC1, rowNumber * 10, baseNow);
+          const rawC2 = row.getCell(2).value;
+          const rawC3 = row.getCell(3).value;
+          const rawC4 = row.getCell(4).value;
+
+          let x = Number(rawC2);
+          let y =
+            rawC3 !== null && rawC3 !== undefined && String(rawC3).trim() !== ''
+              ? Number(rawC3)
+              : 0;
+          let z =
+            rawC4 !== null && rawC4 !== undefined && String(rawC4).trim() !== ''
+              ? Number(rawC4)
+              : 0;
 
           if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
             if (isGUnits) {
@@ -222,23 +242,27 @@ export class DataManagerComponent implements OnInit {
           return;
         }
 
-        const headerLine = lines[0].toLowerCase();
+        const headerCols = lines[0]
+          .toLowerCase()
+          .split(',')
+          .map((c) => c.trim().replace(/^"|"$/g, ''));
         const hasHeader =
-          headerLine.includes('timestamp') ||
-          headerLine.includes('t_utc') ||
-          headerLine.includes('ax_g') ||
-          headerLine.includes(',x,');
-        const isGUnits = headerLine.includes('_g');
+          headerCols[0] === 't' ||
+          headerCols[0] === 'time' ||
+          headerCols[0].includes('timestamp') ||
+          headerCols[0].includes('t_utc') ||
+          isNaN(Number(headerCols[0]));
+        const isGUnits = lines[0].toLowerCase().includes('_g');
         const startIdx = hasHeader ? 1 : 0;
 
         for (let i = startIdx; i < lines.length; i++) {
           const cols = lines[i].split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
-          if (cols.length < 4) continue;
+          if (cols.length < 2) continue;
 
-          const ts = this.parseTimestamp(cols[0], i * 8);
+          const ts = this.parseTimestamp(cols[0], i * 10, baseNow);
           let x = Number(cols[1]);
-          let y = Number(cols[2]);
-          let z = Number(cols[3]);
+          let y = cols.length >= 3 && cols[2] !== '' ? Number(cols[2]) : 0;
+          let z = cols.length >= 4 && cols[3] !== '' ? Number(cols[3]) : 0;
 
           if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
             if (isGUnits) {
@@ -253,7 +277,7 @@ export class DataManagerComponent implements OnInit {
 
       if (rows.length === 0) {
         this.showStatus(
-          'No valid rows found. Expected: (timestamp, x, y, z) or (t_utc_s, ax_g, ay_g, az_g)',
+          'No valid rows found. Supported: (timestamp,x,y,z), (t_utc_s,ax_g,ay_g,az_g), or (t,d)',
           'danger'
         );
         this.isImporting.set(false);

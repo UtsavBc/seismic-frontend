@@ -1,106 +1,237 @@
-import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
+import {
+  Component,
+  DestroyRef,
+  ElementRef,
+  OnDestroy,
+  OnInit,
+  ViewChild,
+  inject,
+  signal,
+} from '@angular/core';
 import { DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { firstValueFrom } from 'rxjs';
-import ExcelJS from 'exceljs';
+import { catchError, exhaustMap, filter, of, timer } from 'rxjs';
+import * as echarts from 'echarts';
+import * as ExcelJS from 'exceljs';
 import {
+  DashboardStats,
   EventsPagination,
   SeismicEvent,
   SeismicService,
   WaveformSample,
-} from '../../services/seismic.service';
+} from './../../services/seismic.service';
 
 @Component({
-  selector: 'app-data-manager',
+  selector: 'app-dashboard',
   standalone: true,
   imports: [DecimalPipe, FormsModule],
-  templateUrl: './data-manager.html',
-  styleUrl: './data-manager.scss',
+  templateUrl: './dashboard.html',
+  styleUrl: './dashboard.scss',
 })
-export class DataManagerComponent implements OnInit {
+export class DashboardComponent implements OnInit, OnDestroy {
   private seismicService = inject(SeismicService);
   private destroyRef = inject(DestroyRef);
-  private statusTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Events & Pagination
+  @ViewChild('waveformChart', { static: true })
+  chartContainer!: ElementRef<HTMLDivElement>;
+
+  private chartInstance: echarts.ECharts | null = null;
+  private lastSeenTimestamp = 0;
+  private lastSeenEventId = 0;
+
+  // Core Data Signals
+  samples = signal<WaveformSample[]>([]);
   events = signal<SeismicEvent[]>([]);
-  pagination = signal<EventsPagination>({ page: 1, limit: 10, total: 0, totalPages: 1 });
+  stats = signal<DashboardStats>({
+    total_events: 0,
+    max_magnitude: 0,
+    critical_alerts: 0,
+    total_readings: 0,
+  });
+  pagination = signal<EventsPagination>({
+    page: 1,
+    limit: 10,
+    total: 0,
+    totalPages: 1,
+  });
+
+  // Controls & Status
+  ingestionEnabled = signal<boolean>(true);
+  livePolling = signal<boolean>(true);
+  isViewingHistory = signal<boolean>(false);
+  hasMoreHistory = signal<boolean>(false);
+  loadingWaveforms = signal<boolean>(false);
   loadingEvents = signal<boolean>(false);
 
-  // Search & Bulk Selection
+  // Search, Selection, Import, Manual Entry & Edit State
   searchQuery = signal<string>('');
   selectedEventIds = signal<number[]>([]);
-
-  // Import / Export & Status Banner
   isImporting = signal<boolean>(false);
-  statusMessage = signal<string>('');
-  statusType = signal<'info' | 'success' | 'danger'>('info');
-
-  // Manual Insert Form
+  importMessage = signal<string>('');
+  showAddForm = signal<boolean>(false);
   newReading = { x: 0, y: 0, z: 0 };
-  isSubmitting = signal<boolean>(false);
 
-  // Inline Edit
   editingEventId = signal<number | null>(null);
   editForm = { magnitude: 0, status: 'Moderate' };
 
-  constructor() {
-    this.destroyRef.onDestroy(() => {
-      if (this.statusTimer) {
-        clearTimeout(this.statusTimer);
-      }
-    });
-  }
-
   ngOnInit(): void {
-    this.loadEvents(1, 10);
-  }
-
-  private showStatus(
-    msg: string,
-    type: 'info' | 'success' | 'danger' = 'info',
-    autoHideMs = 4000
-  ): void {
-    this.statusMessage.set(msg);
-    this.statusType.set(type);
-
-    if (this.statusTimer) {
-      clearTimeout(this.statusTimer);
-      this.statusTimer = null;
-    }
-
-    if (autoHideMs > 0) {
-      this.statusTimer = setTimeout(() => {
-        this.statusMessage.set('');
-      }, autoHideMs);
-    }
-  }
-
-  private parseTimestamp(raw: unknown, fallbackOffsetMs: number, baseNow: number): number {
-    if (raw instanceof Date && !isNaN(raw.getTime())) {
-      return raw.getTime();
-    }
-    const str = String(raw ?? '').trim().replace(/^"|"$/g, '');
-    const num = Number(str);
-    if (Number.isFinite(num) && str !== '') {
-      if (num < 1e9) {
-        // Relative seconds (e.g., chili.csv: 15, 15.01, ...) -> anchor to current time
-        return baseNow + Math.round(num * 1000);
-      }
-      // 10-digit Unix seconds -> ms; 13-digit ms -> keep as-is
-      return num < 1e12 ? Math.trunc(num * 1000) : Math.trunc(num);
-    }
-    const parsedDate = Date.parse(str);
-    if (!isNaN(parsedDate)) {
-      return parsedDate;
-    }
-    return baseNow + fallbackOffsetMs;
+    this.initChart();
+    this.loadIngestionSetting();
+    this.refreshAll();
+    this.startLivePollingLoop();
   }
 
   // =========================================================================
-  // READ + SEARCH + PAGINATION
+  // CHART SETUP & RENDERING
   // =========================================================================
+  private initChart(): void {
+    this.chartInstance = echarts.init(this.chartContainer.nativeElement);
+    window.addEventListener('resize', () => this.chartInstance?.resize());
+  }
+
+  private renderChart(data: WaveformSample[], preserveZoom = false): void {
+    if (!this.chartInstance) return;
+
+    const timestamps = data.map((d) => this.formatShortTime(d.timestamp));
+    const xData = data.map((d) => d.x);
+    const yData = data.map((d) => d.y);
+    const zData = data.map((d) => d.z);
+
+    const option: echarts.EChartsOption = {
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'axis' },
+      legend: {
+        data: ['X-Axis', 'Y-Axis', 'Z-Axis'],
+        textStyle: { color: '#cbd5e1' },
+      },
+      grid: { left: 45, right: 20, top: 35, bottom: 65 },
+      xAxis: {
+        type: 'category',
+        data: timestamps,
+        axisLabel: { color: '#94a3b8' },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: '#94a3b8' },
+        splitLine: { lineStyle: { color: 'rgba(148,163,184,0.15)' } },
+      },
+      dataZoom: preserveZoom
+        ? undefined
+        : [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', start: 0, end: 100, height: 22, bottom: 10 },
+          ],
+      series: [
+        { name: 'X-Axis', type: 'line', showSymbol: false, data: xData, lineStyle: { width: 1.5 } },
+        { name: 'Y-Axis', type: 'line', showSymbol: false, data: yData, lineStyle: { width: 1.5 } },
+        { name: 'Z-Axis', type: 'line', showSymbol: false, data: zData, lineStyle: { width: 1.5 } },
+      ],
+    };
+
+    this.chartInstance.setOption(option, !preserveZoom);
+    this.chartInstance.resize();
+  }
+
+  // =========================================================================
+  // LIVE POLLING & DATA LOADING
+  // =========================================================================
+  private startLivePollingLoop(): void {
+    timer(3000, 3000)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        filter(
+          () =>
+            this.livePolling() &&
+            !document.hidden &&
+            this.ingestionEnabled() &&
+            !this.isViewingHistory()
+        ),
+        exhaustMap(() =>
+          this.seismicService.getLatestWaveforms(150).pipe(catchError(() => of(null)))
+        )
+      )
+      .subscribe((res) => {
+        if (!res) return;
+        this.hasMoreHistory.set(res.hasMore);
+
+        const latestTs =
+          res.data.length > 0 ? Number(res.data[res.data.length - 1].timestamp) : 0;
+
+        if (latestTs !== this.lastSeenTimestamp) {
+          this.lastSeenTimestamp = latestTs;
+          this.samples.set(res.data);
+          this.renderChart(res.data);
+          this.loadStats();
+        }
+
+        if (res.latestEventId && res.latestEventId !== this.lastSeenEventId) {
+          this.lastSeenEventId = res.latestEventId;
+          if (this.pagination().page === 1) {
+            this.loadEvents(1, this.pagination().limit);
+          }
+        }
+      });
+  }
+
+  refreshAll(): void {
+    this.isViewingHistory.set(false);
+    this.loadLatestWaveforms();
+    this.loadStats();
+    this.loadEvents(1, this.pagination().limit);
+  }
+
+  loadLatestWaveforms(): void {
+    this.loadingWaveforms.set(true);
+    this.seismicService
+      .getLatestWaveforms(150)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (res) => {
+          this.samples.set(res.data);
+          this.hasMoreHistory.set(res.hasMore);
+          this.lastSeenTimestamp =
+            res.data.length > 0 ? Number(res.data[res.data.length - 1].timestamp) : 0;
+          if (res.latestEventId !== undefined) {
+            this.lastSeenEventId = res.latestEventId;
+          }
+          this.renderChart(res.data);
+          this.loadingWaveforms.set(false);
+        },
+        error: () => this.loadingWaveforms.set(false),
+      });
+  }
+
+  loadOlderHistory(): void {
+    const current = this.samples();
+    if (current.length === 0 || !this.hasMoreHistory()) return;
+
+    this.isViewingHistory.set(true);
+    const oldestTs = current[0].timestamp;
+
+    this.seismicService
+      .getLatestWaveforms(150, oldestTs)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((res) => {
+        const merged = [...res.data, ...current];
+        this.samples.set(merged);
+        this.hasMoreHistory.set(res.hasMore);
+        this.renderChart(merged, true);
+      });
+  }
+
+  jumpToLive(): void {
+    this.isViewingHistory.set(false);
+    this.loadLatestWaveforms();
+  }
+
+  loadStats(): void {
+    this.seismicService
+      .getStats()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((res) => this.stats.set(res));
+  }
+
   loadEvents(page: number, limit: number): void {
     this.loadingEvents.set(true);
     this.seismicService
@@ -113,13 +244,32 @@ export class DataManagerComponent implements OnInit {
           this.selectedEventIds.set([]);
           this.loadingEvents.set(false);
         },
-        error: () => {
-          this.loadingEvents.set(false);
-          this.showStatus('Failed to load seismic events.', 'danger');
-        },
+        error: () => this.loadingEvents.set(false),
       });
   }
 
+  loadIngestionSetting(): void {
+    this.seismicService
+      .getIngestionSetting()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((res) => this.ingestionEnabled.set(res.ingestion_enabled));
+  }
+
+  toggleIngestion(): void {
+    const nextState = !this.ingestionEnabled();
+    this.seismicService
+      .setIngestionSetting(nextState)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((res) => this.ingestionEnabled.set(res.ingestion_enabled));
+  }
+
+  toggleLivePolling(): void {
+    this.livePolling.set(!this.livePolling());
+  }
+
+  // =========================================================================
+  // SEARCH & PAGINATION
+  // =========================================================================
   onSearchChange(value: string): void {
     this.searchQuery.set(value);
     this.loadEvents(1, this.pagination().limit);
@@ -131,10 +281,122 @@ export class DataManagerComponent implements OnInit {
   }
 
   // =========================================================================
-  // CREATE: MANUAL READING
+  // EXCELJS IMPORT (CSV & XLSX -> DATABASE)
+  // =========================================================================
+  async onFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    this.isImporting.set(true);
+    this.importMessage.set('Reading file...');
+
+    try {
+      const rows: { timestamp: number; x: number; y: number; z: number }[] = [];
+      const ext = file.name.split('.').pop()?.toLowerCase();
+
+      if (ext === 'xlsx') {
+        const workbook = new ExcelJS.Workbook();
+        const buffer = await file.arrayBuffer();
+        await workbook.xlsx.load(buffer);
+        const sheet = workbook.worksheets[0];
+
+        sheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return;
+          const ts = Number(row.getCell(1).value) || Date.now() + rowNumber * 100;
+          const x = Number(row.getCell(2).value);
+          const y = Number(row.getCell(3).value);
+          const z = Number(row.getCell(4).value);
+          if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+            rows.push({ timestamp: Math.trunc(ts), x, y, z });
+          }
+        });
+      } else {
+        const text = await file.text();
+        const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(',').map((c) => c.trim());
+          const ts = Number(cols[0]) || Date.now() + i * 100;
+          const x = Number(cols[1]);
+          const y = Number(cols[2]);
+          const z = Number(cols[3]);
+          if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+            rows.push({ timestamp: Math.trunc(ts), x, y, z });
+          }
+        }
+      }
+
+      if (rows.length === 0) {
+        this.importMessage.set('No valid rows found. Expected columns: timestamp, x, y, z');
+        this.isImporting.set(false);
+        return;
+      }
+
+      this.seismicService
+        .bulkInsertWaveforms(rows)
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: (res) => {
+            this.importMessage.set(
+              `Imported ${res.inserted} readings (${res.eventsLogged} events logged).`
+            );
+            this.isImporting.set(false);
+            this.refreshAll();
+          },
+          error: () => {
+            this.importMessage.set('Upload failed. Check CSV/XLSX format.');
+            this.isImporting.set(false);
+          },
+        });
+    } catch {
+      this.importMessage.set('Failed to parse file.');
+      this.isImporting.set(false);
+    } finally {
+      input.value = '';
+    }
+  }
+
+  // =========================================================================
+  // EXCELJS EXPORT (CSV & XLSX)
+  // =========================================================================
+  async exportData(format: 'xlsx' | 'csv'): Promise<void> {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Seismic Waveforms');
+
+    sheet.columns = [
+      { header: 'timestamp', key: 'timestamp', width: 18 },
+      { header: 'x', key: 'x', width: 12 },
+      { header: 'y', key: 'y', width: 12 },
+      { header: 'z', key: 'z', width: 12 },
+    ];
+
+    this.samples().forEach((s) => {
+      sheet.addRow({ timestamp: s.timestamp, x: s.x, y: s.y, z: s.z });
+    });
+
+    const buffer =
+      format === 'xlsx'
+        ? await workbook.xlsx.writeBuffer()
+        : await workbook.csv.writeBuffer();
+
+    const mime =
+      format === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'text/csv;charset=utf-8;';
+
+    const blob = new Blob([buffer], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `seismic-waveforms-${Date.now()}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // =========================================================================
+  // MANUAL INSERT, EDIT, DELETE, BULK DELETE & RESET ALL
   // =========================================================================
   submitManualReading(): void {
-    this.isSubmitting.set(true);
     const payload = [
       {
         timestamp: Date.now(),
@@ -148,218 +410,14 @@ export class DataManagerComponent implements OnInit {
       .bulkInsertWaveforms(payload)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (res) => {
-          this.isSubmitting.set(false);
+        next: () => {
           this.newReading = { x: 0, y: 0, z: 0 };
-          this.showStatus(
-            `Saved reading (${res.eventsLogged} seismic event logged).`,
-            'success'
-          );
-          this.loadEvents(1, this.pagination().limit);
-        },
-        error: () => {
-          this.isSubmitting.set(false);
-          this.showStatus('Failed to insert reading.', 'danger');
+          this.showAddForm.set(false);
+          this.refreshAll();
         },
       });
   }
 
-  // =========================================================================
-  // CREATE: CSV / XLSX IMPORT (STANDARD 4-COL, HARDWARE G-UNITS, & 2-COL t,d)
-  // =========================================================================
-  async onFileSelected(event: Event): Promise<void> {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-
-    this.isImporting.set(true);
-    this.showStatus('Reading file...', 'info', 0);
-
-    try {
-      const rows: { timestamp: number; x: number; y: number; z: number }[] = [];
-      const ext = file.name.split('.').pop()?.toLowerCase();
-      const G_TO_MS2 = 9.80665;
-      const baseNow = Date.now();
-
-      if (ext === 'xlsx') {
-        const workbook = new ExcelJS.Workbook();
-        const buffer = await file.arrayBuffer();
-        await workbook.xlsx.load(buffer);
-        const sheet = workbook.worksheets[0];
-
-        let isGUnits = false;
-        sheet.eachRow((row, rowNumber) => {
-          const rawC1 = row.getCell(1).value;
-          const c1 = String(rawC1 ?? '').trim();
-          if (!c1 || c1.startsWith('#')) return;
-
-          const lowerC1 = c1.toLowerCase();
-          if (
-            lowerC1 === 't' ||
-            lowerC1 === 'time' ||
-            lowerC1.includes('timestamp') ||
-            lowerC1.includes('t_utc')
-          ) {
-            const c2 = String(row.getCell(2).value ?? '').toLowerCase();
-            isGUnits = c2.includes('_g');
-            return;
-          }
-
-          const ts = this.parseTimestamp(rawC1, rowNumber * 10, baseNow);
-          const rawC2 = row.getCell(2).value;
-          const rawC3 = row.getCell(3).value;
-          const rawC4 = row.getCell(4).value;
-
-          let x = Number(rawC2);
-          let y =
-            rawC3 !== null && rawC3 !== undefined && String(rawC3).trim() !== ''
-              ? Number(rawC3)
-              : 0;
-          let z =
-            rawC4 !== null && rawC4 !== undefined && String(rawC4).trim() !== ''
-              ? Number(rawC4)
-              : 0;
-
-          if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-            if (isGUnits) {
-              x = Number((x * G_TO_MS2).toFixed(4));
-              y = Number((y * G_TO_MS2).toFixed(4));
-              z = Number((z * G_TO_MS2).toFixed(4));
-            }
-            rows.push({ timestamp: ts, x, y, z });
-          }
-        });
-      } else {
-        const text = await file.text();
-        const lines = text
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0 && !l.startsWith('#'));
-
-        if (lines.length === 0) {
-          this.showStatus('CSV file is empty.', 'danger');
-          this.isImporting.set(false);
-          return;
-        }
-
-        const headerCols = lines[0]
-          .toLowerCase()
-          .split(',')
-          .map((c) => c.trim().replace(/^"|"$/g, ''));
-        const hasHeader =
-          headerCols[0] === 't' ||
-          headerCols[0] === 'time' ||
-          headerCols[0].includes('timestamp') ||
-          headerCols[0].includes('t_utc') ||
-          isNaN(Number(headerCols[0]));
-        const isGUnits = lines[0].toLowerCase().includes('_g');
-        const startIdx = hasHeader ? 1 : 0;
-
-        for (let i = startIdx; i < lines.length; i++) {
-          const cols = lines[i].split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
-          if (cols.length < 2) continue;
-
-          const ts = this.parseTimestamp(cols[0], i * 10, baseNow);
-          let x = Number(cols[1]);
-          let y = cols.length >= 3 && cols[2] !== '' ? Number(cols[2]) : 0;
-          let z = cols.length >= 4 && cols[3] !== '' ? Number(cols[3]) : 0;
-
-          if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-            if (isGUnits) {
-              x = Number((x * G_TO_MS2).toFixed(4));
-              y = Number((y * G_TO_MS2).toFixed(4));
-              z = Number((z * G_TO_MS2).toFixed(4));
-            }
-            rows.push({ timestamp: ts, x, y, z });
-          }
-        }
-      }
-
-      if (rows.length === 0) {
-        this.showStatus(
-          'No valid rows found. Supported: (timestamp,x,y,z), (t_utc_s,ax_g,ay_g,az_g), or (t,d)',
-          'danger'
-        );
-        this.isImporting.set(false);
-        return;
-      }
-
-      const CHUNK_SIZE = 500;
-      let totalInserted = 0;
-      let totalEventsLogged = 0;
-
-      for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
-        const chunk = rows.slice(i, i + CHUNK_SIZE);
-        const processed = Math.min(i + CHUNK_SIZE, rows.length);
-        this.showStatus(`Importing ${processed} / ${rows.length} readings...`, 'info', 0);
-
-        const res = await firstValueFrom(this.seismicService.bulkInsertWaveforms(chunk));
-        totalInserted += res.inserted;
-        totalEventsLogged += res.eventsLogged;
-      }
-
-      this.isImporting.set(false);
-      this.showStatus(
-        `Imported ${totalInserted} readings (${totalEventsLogged} events logged).`,
-        'success'
-      );
-      this.loadEvents(1, this.pagination().limit);
-    } catch {
-      this.isImporting.set(false);
-      this.showStatus('Database import failed.', 'danger');
-    } finally {
-      input.value = '';
-    }
-  }
-
-  // =========================================================================
-  // EXPORT WAVEFORMS (CSV / XLSX)
-  // =========================================================================
-  exportWaveforms(format: 'csv' | 'xlsx'): void {
-    this.showStatus(`Preparing ${format.toUpperCase()} export...`, 'info', 0);
-    this.seismicService
-      .getLatestWaveforms(1000)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: async (res) => {
-          const workbook = new ExcelJS.Workbook();
-          const sheet = workbook.addWorksheet('Seismic Waveforms');
-          sheet.columns = [
-            { header: 'timestamp', key: 'timestamp', width: 18 },
-            { header: 'x', key: 'x', width: 12 },
-            { header: 'y', key: 'y', width: 12 },
-            { header: 'z', key: 'z', width: 12 },
-          ];
-          res.data.forEach((s: WaveformSample) => {
-            sheet.addRow({ timestamp: s.timestamp, x: s.x, y: s.y, z: s.z });
-          });
-
-          const buffer =
-            format === 'xlsx'
-              ? await workbook.xlsx.writeBuffer()
-              : await workbook.csv.writeBuffer();
-
-          const mime =
-            format === 'xlsx'
-              ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-              : 'text/csv;charset=utf-8;';
-
-          const blob = new Blob([buffer], { type: mime });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `seismic-waveforms-${Date.now()}.${format}`;
-          a.click();
-          URL.revokeObjectURL(url);
-          this.showStatus(`Exported ${res.data.length} waveforms.`, 'success');
-        },
-        error: () => this.showStatus('Export failed.', 'danger'),
-      });
-  }
-
-  // =========================================================================
-  // UPDATE & DELETE (SINGLE, BULK, RESET ALL)
-  // =========================================================================
   startEdit(ev: SeismicEvent): void {
     this.editingEventId.set(ev.id);
     this.editForm = { magnitude: ev.magnitude, status: ev.status };
@@ -376,24 +434,22 @@ export class DataManagerComponent implements OnInit {
       .subscribe({
         next: () => {
           this.editingEventId.set(null);
-          this.showStatus(`Updated event #${id}.`, 'success');
           this.loadEvents(this.pagination().page, this.pagination().limit);
+          this.loadStats();
         },
-        error: () => this.showStatus('Update failed.', 'danger'),
       });
   }
 
   deleteSingleEvent(id: number): void {
-    if (!confirm(`Delete event #${id}?`)) return;
+    if (!confirm('Delete this seismic event?')) return;
     this.seismicService
       .deleteEvent(id)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {
-          this.showStatus(`Deleted event #${id}.`, 'success');
           this.loadEvents(this.pagination().page, this.pagination().limit);
+          this.loadStats();
         },
-        error: () => this.showStatus('Delete failed.', 'danger'),
       });
   }
 
@@ -418,12 +474,11 @@ export class DataManagerComponent implements OnInit {
       .bulkDeleteEvents(ids)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (res) => {
+        next: () => {
           this.selectedEventIds.set([]);
-          this.showStatus(`Deleted ${res.deletedCount} event(s).`, 'success');
           this.loadEvents(1, this.pagination().limit);
+          this.loadStats();
         },
-        error: () => this.showStatus('Bulk delete failed.', 'danger'),
       });
   }
 
@@ -433,18 +488,22 @@ export class DataManagerComponent implements OnInit {
       .deleteAllData()
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: () => {
-          this.showStatus('All waveforms and events cleared.', 'success');
-          this.loadEvents(1, this.pagination().limit);
-        },
-        error: () => this.showStatus('Reset failed.', 'danger'),
+        next: () => this.refreshAll(),
       });
   }
 
+  // =========================================================================
+  // DATE FORMATTING HELPERS
+  // =========================================================================
   formatEventTime(raw: string): string {
     if (!raw) return '-';
     const d = new Date(raw);
     return isNaN(d.getTime()) ? raw : d.toLocaleString();
+  }
+
+  private formatShortTime(ts: number): string {
+    const d = new Date(Number(ts));
+    return isNaN(d.getTime()) ? String(ts) : d.toLocaleTimeString();
   }
 
   ngOnDestroy(): void {
