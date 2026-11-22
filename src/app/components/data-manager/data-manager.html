@@ -1,0 +1,226 @@
+<div class="container-fluid py-3 text-light bg-dark min-vh-100">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <h4 class="mb-0 fw-bold">Data Management (CRUD & Import/Export)</h4>
+    <button class="btn btn-sm btn-danger" (click)="resetAllData()">
+      Delete All Data (Fresh Reset)
+    </button>
+  </div>
+
+  @if (statusMessage()) {
+    <div class="alert py-2 px-3 small" [class]="'alert-' + statusType()">
+      {{ statusMessage() }}
+    </div>
+  }
+
+  <!-- TOP ROW: MANUAL INSERT + CSV/XLSX IMPORT/EXPORT -->
+  <div class="row g-3 mb-4">
+    <!-- Manual Insert Card -->
+    <div class="col-lg-7">
+      <div class="card bg-secondary bg-opacity-10 border-secondary p-3 h-100">
+        <h6 class="mb-3">Insert New Reading</h6>
+        <div class="row g-2 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label small text-secondary">X-Axis</label>
+            <input
+              type="number"
+              step="0.01"
+              class="form-control form-control-sm"
+              [(ngModel)]="newReading.x"
+            />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small text-secondary">Y-Axis</label>
+            <input
+              type="number"
+              step="0.01"
+              class="form-control form-control-sm"
+              [(ngModel)]="newReading.y"
+            />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small text-secondary">Z-Axis</label>
+            <input
+              type="number"
+              step="0.01"
+              class="form-control form-control-sm"
+              [(ngModel)]="newReading.z"
+            />
+          </div>
+          <div class="col-md-3">
+            <button
+              class="btn btn-sm btn-primary w-100"
+              [disabled]="isSubmitting()"
+              (click)="submitManualReading()"
+            >
+              {{ isSubmitting() ? 'Saving...' : '+ Insert' }}
+            </button>
+          </div>
+        </div>
+        <small class="text-secondary mt-2 d-block">
+          Any axis with |value| greater than 7.5 automatically logs a seismic event.
+        </small>
+      </div>
+    </div>
+
+    <!-- Import / Export Card -->
+    <div class="col-lg-5">
+      <div class="card bg-secondary bg-opacity-10 border-secondary p-3 h-100">
+        <h6 class="mb-3">CSV / Excel (ExcelJS)</h6>
+        <div class="d-flex flex-wrap gap-2">
+          <label class="btn btn-sm btn-info text-dark fw-semibold mb-0">
+            {{ isImporting() ? 'Importing...' : 'Upload CSV / XLSX' }}
+            <input type="file" accept=".csv,.xlsx" (change)="onFileSelected($event)" hidden />
+          </label>
+          <button class="btn btn-sm btn-outline-light" (click)="exportWaveforms('csv')">
+            Export CSV
+          </button>
+          <button class="btn btn-sm btn-outline-light" (click)="exportWaveforms('xlsx')">
+            Export XLSX
+          </button>
+        </div>
+        <small class="text-secondary mt-2 d-block">
+          Expected columns: <code>timestamp, x, y, z</code>
+        </small>
+      </div>
+    </div>
+  </div>
+
+  <!-- EVENTS CRUD TABLE -->
+  <div class="card bg-secondary bg-opacity-10 border-secondary p-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <div class="d-flex align-items-center gap-2">
+        <h6 class="mb-0">Seismic Events</h6>
+        @if (selectedEventIds().length > 0) {
+          <button class="btn btn-sm btn-warning" (click)="bulkDeleteSelected()">
+            Delete Selected ({{ selectedEventIds().length }})
+          </button>
+        }
+      </div>
+
+      <input
+        type="text"
+        class="form-control form-control-sm"
+        style="max-width: 300px;"
+        placeholder="Search status, magnitude, or ID..."
+        [ngModel]="searchQuery()"
+        (ngModelChange)="onSearchChange($event)"
+      />
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-dark table-hover table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th style="width: 36px;">
+              <input type="checkbox" (change)="toggleSelectAll($event)" />
+            </th>
+            <th>ID</th>
+            <th>Event Time</th>
+            <th>Magnitude</th>
+            <th>Status</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (ev of events(); track ev.id) {
+            <tr>
+              <td>
+                <input
+                  type="checkbox"
+                  [checked]="selectedEventIds().includes(ev.id)"
+                  (change)="toggleSelectEvent(ev.id)"
+                />
+              </td>
+              <td>#{{ ev.id }}</td>
+              <td>{{ formatEventTime(ev.event_time) }}</td>
+              <td>
+                @if (editingEventId() === ev.id) {
+                  <input
+                    type="number"
+                    step="0.001"
+                    class="form-control form-control-sm"
+                    style="max-width: 120px;"
+                    [(ngModel)]="editForm.magnitude"
+                  />
+                } @else {
+                  {{ ev.magnitude | number: '1.3-3' }} m/s²
+                }
+              </td>
+              <td>
+                @if (editingEventId() === ev.id) {
+                  <select
+                    class="form-select form-select-sm"
+                    style="max-width: 130px;"
+                    [(ngModel)]="editForm.status"
+                  >
+                    <option value="Moderate">Moderate</option>
+                    <option value="Strong">Strong</option>
+                    <option value="Critical">Critical</option>
+                  </select>
+                } @else {
+                  <span
+                    class="badge"
+                    [class.bg-danger]="ev.status === 'Critical'"
+                    [class.bg-warning]="ev.status === 'Strong'"
+                    [class.text-dark]="ev.status === 'Strong'"
+                    [class.bg-info]="ev.status === 'Moderate'"
+                  >
+                    {{ ev.status }}
+                  </span>
+                }
+              </td>
+              <td class="text-end">
+                @if (editingEventId() === ev.id) {
+                  <button class="btn btn-sm btn-success me-1" (click)="saveEdit(ev.id)">
+                    Save
+                  </button>
+                  <button class="btn btn-sm btn-secondary" (click)="cancelEdit()">Cancel</button>
+                } @else {
+                  <button class="btn btn-sm btn-outline-info me-1" (click)="startEdit(ev)">
+                    Edit
+                  </button>
+                  <button
+                    class="btn btn-sm btn-outline-danger"
+                    (click)="deleteSingleEvent(ev.id)"
+                  >
+                    Delete
+                  </button>
+                }
+              </td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="6" class="text-center text-secondary py-3">
+                No seismic events found.
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <!-- PAGINATION -->
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <small class="text-secondary">
+        Page {{ pagination().page }} of {{ pagination().totalPages }} ({{ pagination().total }}
+        total)
+      </small>
+      <div class="d-flex gap-2">
+        <button
+          class="btn btn-sm btn-outline-light"
+          [disabled]="pagination().page <= 1"
+          (click)="changePage(pagination().page - 1)"
+        >
+          Previous
+        </button>
+        <button
+          class="btn btn-sm btn-outline-light"
+          [disabled]="pagination().page >= pagination().totalPages"
+          (click)="changePage(pagination().page + 1)"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

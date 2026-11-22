@@ -25,4 +25,25 @@
       </main>
     </div> -->
 
-    <app-dashboard />
+    <!-- <app-dashboard /> -->
+     <nav class="navbar navbar-expand navbar-dark bg-black border-bottom border-secondary px-3">
+  <span class="navbar-brand fw-bold">Seismic Monitor</span>
+  <div class="navbar-nav gap-2">
+    <a
+      class="nav-link px-3 rounded"
+      routerLink="/dashboard"
+      routerLinkActive="active bg-primary text-white"
+    >
+      Live Dashboard
+    </a>
+    <a
+      class="nav-link px-3 rounded"
+      routerLink="/manage"
+      routerLinkActive="active bg-primary text-white"
+    >
+      Manage Data (CRUD)
+    </a>
+  </div>
+</nav>
+
+<router-outlet />
