@@ -1,7 +1,8 @@
-import { Component, DestroyRef, OnDestroy, OnInit, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { firstValueFrom } from 'rxjs';
 import ExcelJS from 'exceljs';
 import {
   EventsPagination,
@@ -17,9 +18,10 @@ import {
   templateUrl: './data-manager.html',
   styleUrl: './data-manager.scss',
 })
-export class DataManagerComponent implements OnInit, OnDestroy {
+export class DataManagerComponent implements OnInit {
   private seismicService = inject(SeismicService);
   private destroyRef = inject(DestroyRef);
+  private statusTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Events & Pagination
   events = signal<SeismicEvent[]>([]);
@@ -43,13 +45,53 @@ export class DataManagerComponent implements OnInit, OnDestroy {
   editingEventId = signal<number | null>(null);
   editForm = { magnitude: 0, status: 'Moderate' };
 
+  constructor() {
+    this.destroyRef.onDestroy(() => {
+      if (this.statusTimer) {
+        clearTimeout(this.statusTimer);
+      }
+    });
+  }
+
   ngOnInit(): void {
     this.loadEvents(1, 10);
   }
 
-  private showStatus(msg: string, type: 'info' | 'success' | 'danger' = 'info'): void {
+  private showStatus(
+    msg: string,
+    type: 'info' | 'success' | 'danger' = 'info',
+    autoHideMs = 4000
+  ): void {
     this.statusMessage.set(msg);
     this.statusType.set(type);
+
+    if (this.statusTimer) {
+      clearTimeout(this.statusTimer);
+      this.statusTimer = null;
+    }
+
+    if (autoHideMs > 0) {
+      this.statusTimer = setTimeout(() => {
+        this.statusMessage.set('');
+      }, autoHideMs);
+    }
+  }
+
+  private parseTimestamp(raw: unknown, fallbackOffsetMs: number): number {
+    if (raw instanceof Date && !isNaN(raw.getTime())) {
+      return raw.getTime();
+    }
+    const str = String(raw ?? '').trim().replace(/^"|"$/g, '');
+    const num = Number(str);
+    if (Number.isFinite(num) && str !== '') {
+      // 10-digit Unix seconds -> convert to ms; 13-digit ms -> keep as-is
+      return num < 1e12 ? Math.trunc(num * 1000) : Math.trunc(num);
+    }
+    const parsedDate = Date.parse(str);
+    if (!isNaN(parsedDate)) {
+      return parsedDate;
+    }
+    return Date.now() + fallbackOffsetMs;
   }
 
   // =========================================================================
@@ -119,7 +161,7 @@ export class DataManagerComponent implements OnInit, OnDestroy {
   }
 
   // =========================================================================
-  // CREATE: CSV / XLSX IMPORT (EXCELJS)
+  // CREATE: CSV / XLSX IMPORT (SUPPORTS BOTH STANDARD & HARDWARE FORMATS)
   // =========================================================================
   async onFileSelected(event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
@@ -127,11 +169,12 @@ export class DataManagerComponent implements OnInit, OnDestroy {
     if (!file) return;
 
     this.isImporting.set(true);
-    this.showStatus('Reading file...', 'info');
+    this.showStatus('Reading file...', 'info', 0);
 
     try {
       const rows: { timestamp: number; x: number; y: number; z: number }[] = [];
       const ext = file.name.split('.').pop()?.toLowerCase();
+      const G_TO_MS2 = 9.80665;
 
       if (ext === 'xlsx') {
         const workbook = new ExcelJS.Workbook();
@@ -139,57 +182,107 @@ export class DataManagerComponent implements OnInit, OnDestroy {
         await workbook.xlsx.load(buffer);
         const sheet = workbook.worksheets[0];
 
+        let isGUnits = false;
         sheet.eachRow((row, rowNumber) => {
-          if (rowNumber === 1) return;
-          const ts = Number(row.getCell(1).value) || Date.now() + rowNumber * 100;
-          const x = Number(row.getCell(2).value);
-          const y = Number(row.getCell(3).value);
-          const z = Number(row.getCell(4).value);
+          const rawC1 = row.getCell(1).value;
+          const c1 = String(rawC1 ?? '').trim();
+          if (!c1 || c1.startsWith('#')) return;
+
+          const lowerC1 = c1.toLowerCase();
+          if (lowerC1.includes('timestamp') || lowerC1.includes('t_utc') || lowerC1 === 'time') {
+            const c2 = String(row.getCell(2).value ?? '').toLowerCase();
+            isGUnits = c2.includes('_g');
+            return;
+          }
+
+          const ts = this.parseTimestamp(rawC1, rowNumber * 8);
+          let x = Number(row.getCell(2).value);
+          let y = Number(row.getCell(3).value);
+          let z = Number(row.getCell(4).value);
+
           if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-            rows.push({ timestamp: Math.trunc(ts), x, y, z });
+            if (isGUnits) {
+              x = Number((x * G_TO_MS2).toFixed(4));
+              y = Number((y * G_TO_MS2).toFixed(4));
+              z = Number((z * G_TO_MS2).toFixed(4));
+            }
+            rows.push({ timestamp: ts, x, y, z });
           }
         });
       } else {
         const text = await file.text();
-        const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-        for (let i = 1; i < lines.length; i++) {
-          const cols = lines[i].split(',').map((c) => c.trim());
-          const ts = Number(cols[0]) || Date.now() + i * 100;
-          const x = Number(cols[1]);
-          const y = Number(cols[2]);
-          const z = Number(cols[3]);
+        const lines = text
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0 && !l.startsWith('#'));
+
+        if (lines.length === 0) {
+          this.showStatus('CSV file is empty.', 'danger');
+          this.isImporting.set(false);
+          return;
+        }
+
+        const headerLine = lines[0].toLowerCase();
+        const hasHeader =
+          headerLine.includes('timestamp') ||
+          headerLine.includes('t_utc') ||
+          headerLine.includes('ax_g') ||
+          headerLine.includes(',x,');
+        const isGUnits = headerLine.includes('_g');
+        const startIdx = hasHeader ? 1 : 0;
+
+        for (let i = startIdx; i < lines.length; i++) {
+          const cols = lines[i].split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+          if (cols.length < 4) continue;
+
+          const ts = this.parseTimestamp(cols[0], i * 8);
+          let x = Number(cols[1]);
+          let y = Number(cols[2]);
+          let z = Number(cols[3]);
+
           if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-            rows.push({ timestamp: Math.trunc(ts), x, y, z });
+            if (isGUnits) {
+              x = Number((x * G_TO_MS2).toFixed(4));
+              y = Number((y * G_TO_MS2).toFixed(4));
+              z = Number((z * G_TO_MS2).toFixed(4));
+            }
+            rows.push({ timestamp: ts, x, y, z });
           }
         }
       }
 
       if (rows.length === 0) {
-        this.showStatus('No valid rows found. Expected columns: timestamp, x, y, z', 'danger');
+        this.showStatus(
+          'No valid rows found. Expected: (timestamp, x, y, z) or (t_utc_s, ax_g, ay_g, az_g)',
+          'danger'
+        );
         this.isImporting.set(false);
         return;
       }
 
-      this.seismicService
-        .bulkInsertWaveforms(rows)
-        .pipe(takeUntilDestroyed(this.destroyRef))
-        .subscribe({
-          next: (res) => {
-            this.isImporting.set(false);
-            this.showStatus(
-              `Imported ${res.inserted} readings (${res.eventsLogged} events logged).`,
-              'success'
-            );
-            this.loadEvents(1, this.pagination().limit);
-          },
-          error: () => {
-            this.isImporting.set(false);
-            this.showStatus('Database import failed.', 'danger');
-          },
-        });
+      const CHUNK_SIZE = 500;
+      let totalInserted = 0;
+      let totalEventsLogged = 0;
+
+      for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+        const chunk = rows.slice(i, i + CHUNK_SIZE);
+        const processed = Math.min(i + CHUNK_SIZE, rows.length);
+        this.showStatus(`Importing ${processed} / ${rows.length} readings...`, 'info', 0);
+
+        const res = await firstValueFrom(this.seismicService.bulkInsertWaveforms(chunk));
+        totalInserted += res.inserted;
+        totalEventsLogged += res.eventsLogged;
+      }
+
+      this.isImporting.set(false);
+      this.showStatus(
+        `Imported ${totalInserted} readings (${totalEventsLogged} events logged).`,
+        'success'
+      );
+      this.loadEvents(1, this.pagination().limit);
     } catch {
       this.isImporting.set(false);
-      this.showStatus('Failed to parse file.', 'danger');
+      this.showStatus('Database import failed.', 'danger');
     } finally {
       input.value = '';
     }
@@ -199,7 +292,7 @@ export class DataManagerComponent implements OnInit, OnDestroy {
   // EXPORT WAVEFORMS (CSV / XLSX)
   // =========================================================================
   exportWaveforms(format: 'csv' | 'xlsx'): void {
-    this.showStatus(`Preparing ${format.toUpperCase()} export...`, 'info');
+    this.showStatus(`Preparing ${format.toUpperCase()} export...`, 'info', 0);
     this.seismicService
       .getLatestWaveforms(1000)
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -276,6 +369,7 @@ export class DataManagerComponent implements OnInit, OnDestroy {
           this.showStatus(`Deleted event #${id}.`, 'success');
           this.loadEvents(this.pagination().page, this.pagination().limit);
         },
+        error: () => this.showStatus('Delete failed.', 'danger'),
       });
   }
 
@@ -305,6 +399,7 @@ export class DataManagerComponent implements OnInit, OnDestroy {
           this.showStatus(`Deleted ${res.deletedCount} event(s).`, 'success');
           this.loadEvents(1, this.pagination().limit);
         },
+        error: () => this.showStatus('Bulk delete failed.', 'danger'),
       });
   }
 
@@ -318,6 +413,7 @@ export class DataManagerComponent implements OnInit, OnDestroy {
           this.showStatus('All waveforms and events cleared.', 'success');
           this.loadEvents(1, this.pagination().limit);
         },
+        error: () => this.showStatus('Reset failed.', 'danger'),
       });
   }
 
