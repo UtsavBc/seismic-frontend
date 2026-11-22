@@ -17,13 +17,16 @@
     "@angular/forms": "^22.2.0",
     "@angular/platform-browser": "^22.2.0",
     "@angular/router": "^22.2.0",
+    "echarts": "^6.1.0",
     "rxjs": "~7.8.0",
+    "socket.io-client": "^4.8.4",
     "tslib": "^2.3.0"
   },
   "devDependencies": {
     "@angular/build": "^22.2.7",
     "@angular/cli": "^22.2.7",
     "@angular/compiler-cli": "^22.2.0",
+    "@types/echarts": "^4.9.22",
     "jsdom": "^30.0.0",
     "prettier": "^3.8.1",
     "typescript": "~6.0.2",
