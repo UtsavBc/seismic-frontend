@@ -8,7 +8,7 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { DatePipe, DecimalPipe } from '@angular/common';
+import { DecimalPipe } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { EMPTY, catchError, exhaustMap, filter, timer } from 'rxjs';
 import * as echarts from 'echarts';
@@ -23,7 +23,7 @@ import {
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [DatePipe, DecimalPipe],
+  imports: [DecimalPipe],
   templateUrl: './dashboard.html',
   styleUrls: ['./dashboard.scss'],
 })
@@ -34,6 +34,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   @ViewChild('waveformChart', { static: true }) chartContainer!: ElementRef<HTMLDivElement>;
   private chart?: echarts.ECharts;
   private lastSeenTimestamp = 0;
+  private isResettingZoom = false;
   private readonly MAX_SAMPLES_IN_MEMORY = 1500;
 
   // KPI Stats
@@ -78,9 +79,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.chart?.dispose();
   }
 
-
   // =========================================================================
-  // MANUAL REFRESH & LIVE POLLING TOGGLE
+  // MANUAL REFRESH & LIVE POLLING (AUTO-FETCH NEWER DATA EVERY 3s)
   // =========================================================================
   toggleLivePolling(): void {
     const next = !this.livePolling();
@@ -106,11 +106,16 @@ export class DashboardComponent implements OnInit, OnDestroy {
         next: (res) => {
           this.hasMoreHistory.set(res.hasMore);
           this.samples.set(res.data);
-          this.lastSeenTimestamp = res.data.length > 0
-            ? Number(res.data[res.data.length - 1].timestamp)
-            : 0;
+          this.lastSeenTimestamp =
+            res.data.length > 0 ? Number(res.data[res.data.length - 1].timestamp) : 0;
+
           this.renderChart(res.data);
+
+          // Reset zoom without triggering history-load listener
+          this.isResettingZoom = true;
           this.chart?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
+          setTimeout(() => (this.isResettingZoom = false), 0);
+
           this.isRefreshing.set(false);
         },
         error: () => this.isRefreshing.set(false),
@@ -118,29 +123,28 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   private startLivePollingLoop(): void {
-    // Only fires when Live Polling is ON, tab is visible, DB ingestion is ON, and not viewing history
+    // Runs every 3 seconds ONLY when Live Poll is ON, tab is visible, DB ingestion is ON, and not in history mode
     timer(3000, 3000)
       .pipe(
-        filter(() =>
-          this.livePolling() &&
-          !document.hidden &&
-          this.ingestionEnabled() &&
-          !this.isViewingHistory()
+        filter(
+          () =>
+            this.livePolling() &&
+            !document.hidden &&
+            this.ingestionEnabled() &&
+            !this.isViewingHistory()
         ),
         exhaustMap(() =>
-          this.seismicService.getWaveforms(150).pipe(
-            catchError(() => EMPTY)
-          )
+          this.seismicService.getWaveforms(150).pipe(catchError(() => EMPTY))
         ),
         takeUntilDestroyed(this.destroyRef)
       )
       .subscribe((res) => {
         this.hasMoreHistory.set(res.hasMore);
 
-        const latestTs = res.data.length > 0
-          ? Number(res.data[res.data.length - 1].timestamp)
-          : 0;
+        const latestTs =
+          res.data.length > 0 ? Number(res.data[res.data.length - 1].timestamp) : 0;
 
+        // Only update chart, stats, and events when NEW data arrives
         if (latestTs !== this.lastSeenTimestamp) {
           this.lastSeenTimestamp = latestTs;
           this.samples.set(res.data);
@@ -239,21 +243,44 @@ export class DashboardComponent implements OnInit, OnDestroy {
         },
       ],
       series: [
-        { name: 'X-Axis', type: 'line', showSymbol: false, smooth: true, lineStyle: { color: '#38bdf8', width: 2 }, data: [] },
-        { name: 'Y-Axis', type: 'line', showSymbol: false, smooth: true, lineStyle: { color: '#22c55e', width: 2 }, data: [] },
-        { name: 'Z-Axis', type: 'line', showSymbol: false, smooth: true, lineStyle: { color: '#f472b6', width: 2 }, data: [] },
+        {
+          name: 'X-Axis',
+          type: 'line',
+          showSymbol: false,
+          smooth: true,
+          lineStyle: { color: '#38bdf8', width: 2 },
+          data: [],
+        },
+        {
+          name: 'Y-Axis',
+          type: 'line',
+          showSymbol: false,
+          smooth: true,
+          lineStyle: { color: '#22c55e', width: 2 },
+          data: [],
+        },
+        {
+          name: 'Z-Axis',
+          type: 'line',
+          showSymbol: false,
+          smooth: true,
+          lineStyle: { color: '#f472b6', width: 2 },
+          data: [],
+        },
       ],
     });
 
     this.chart.on('datazoom', (params: any) => {
+      if (this.isResettingZoom) return;
+
       const start = params.batch ? params.batch[0]?.start : params.start;
       const end = params.batch ? params.batch[0]?.end : params.end;
 
-      if (typeof end === 'number' && end < 98) {
-        this.isViewingHistory.set(true);
+      if (typeof end === 'number') {
+        this.isViewingHistory.set(end < 98);
       }
 
-      if (typeof start === 'number' && start <= 5) {
+      if (typeof start === 'number' && typeof end === 'number' && start <= 5 && end < 98) {
         this.loadOlderWaveforms();
       }
     });
@@ -340,5 +367,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
   onPageSizeChange(event: Event): void {
     const newLimit = Number((event.target as HTMLSelectElement).value);
     this.loadEvents(1, newLimit);
+  }
+
+  formatEventTime(value: string | number): string {
+    if (!value) return '-';
+    return new Date(value).toLocaleString();
   }
 }
