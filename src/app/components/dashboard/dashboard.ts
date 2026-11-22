@@ -35,6 +35,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private chart?: echarts.ECharts;
   private lastSeenTimestamp = 0;
   private isResettingZoom = false;
+  private zoomStart = 0;
+  private zoomEnd = 100;
   private readonly MAX_SAMPLES_IN_MEMORY = 1500;
 
   // KPI Stats
@@ -112,9 +114,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
           this.renderChart(res.data);
 
           // Reset zoom without triggering history-load listener
+          this.zoomStart = 0;
+          this.zoomEnd = 100;
           this.isResettingZoom = true;
           this.chart?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
-          setTimeout(() => (this.isResettingZoom = false), 0);
+          setTimeout(() => (this.isResettingZoom = false), 50);
 
           this.isRefreshing.set(false);
         },
@@ -276,7 +280,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
       const start = params.batch ? params.batch[0]?.start : params.start;
       const end = params.batch ? params.batch[0]?.end : params.end;
 
+      if (typeof start === 'number') this.zoomStart = start;
       if (typeof end === 'number') {
+        this.zoomEnd = end;
         this.isViewingHistory.set(end < 98);
       }
 
@@ -312,9 +318,34 @@ export class DashboardComponent implements OnInit, OnDestroy {
         next: (res) => {
           this.hasMoreHistory.set(res.hasMore);
           if (res.data.length > 0) {
-            const merged = [...res.data, ...current].slice(-this.MAX_SAMPLES_IN_MEMORY);
+            const oldLen = current.length;
+            const added = res.data.length;
+            const merged = [...res.data, ...current];
+            const newLen = merged.length;
+
             this.samples.set(merged);
             this.renderChart(merged);
+
+            // Shift the slider right by `added` samples so the new 150 sit cleanly to the left
+            const oldStartIdx = (this.zoomStart / 100) * Math.max(oldLen - 1, 1);
+            const oldEndIdx = (this.zoomEnd / 100) * Math.max(oldLen - 1, 1);
+
+            const newStart = ((oldStartIdx + added) / Math.max(newLen - 1, 1)) * 100;
+            const newEnd = Math.min(
+              100,
+              ((oldEndIdx + added) / Math.max(newLen - 1, 1)) * 100
+            );
+
+            this.zoomStart = newStart;
+            this.zoomEnd = newEnd;
+
+            this.isResettingZoom = true;
+            this.chart?.dispatchAction({
+              type: 'dataZoom',
+              start: newStart,
+              end: newEnd,
+            });
+            setTimeout(() => (this.isResettingZoom = false), 50);
           }
           this.isLoadingHistory.set(false);
         },
